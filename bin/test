@@ -1,0 +1,124 @@
+#!/bin/bash
+
+
+###############################################################################
+# Module:       test
+# Description:  A script that discover files to test with neptune framework
+# Version:      1.0.0 
+#
+# Author:       David BELBEZE <david.belbeze@gmail.com>
+###############################################################################
+
+
+# Clean the workspace
+test.clean () 
+{
+    rm /tmp/neptune-test-report \
+        /tmp/neptune-test-count \
+        /tmp/neptune-test \
+        /tmp/neptune-test-stderr \
+        /tmp/neptune-test-stdout 2>/dev/null
+}
+
+# Find recursively all test files in the given directory path
+#
+# $1:   The path of the directory where test have to be discovered 
+test.folder ()
+{
+    find $1 -type f -name "test_*" | while read -r filename; do
+        # Before all
+        
+        # Test the file
+        test.file $filename
+        
+        # After all
+    done
+}
+
+# Perform test on the file and call before and after scripts
+#
+# $1:   The path to the file to test
+test.file ()
+{
+    local test_file=$1
+    local test_dir=$(dirname $test_file)
+    
+    # Execute in other shell to prevent environment modifications
+    bash -c "# Before test
+    if [ -f $test_dir/before.bash ]; then
+        source $test_dir/before.bash
+    fi
+
+    # Test the file
+    bash $test_file
+    exit_code=\$?
+
+    # After test
+    if [ -f $test_dir/after.bash ]; then
+        source $test_dir/after.bash
+    fi
+    
+    exit \$exit_code" > /tmp/neptune-test 2>&1
+    
+    if [[ $? -ne 0 ]]; then
+        neptune.style "." $FG_RED
+        # test failed
+        neptune.style "Test suite $filename failed\n" $FG_RED $ST_BOLD\
+            >> /tmp/neptune-test-report
+        cat /tmp/neptune-test >> /tmp/neptune-test-report
+    else
+        neptune.style "." $FG_GREEN
+    fi
+}
+
+# Prepare the test sequence
+source $NEPTUNE
+
+test.clean
+echo "0" > /tmp/neptune-test-count
+
+
+# for each test dirs execute the test suite
+before=$(date +%s)
+
+
+if [ $# -eq 0 ]; then
+    # No argument perform test by discovering in current folder
+    neptune.logging $DEBUG test \
+        "Perform test by discovering test files in the current directory"
+    test.folder ./
+else
+    # Analyse each argument to perform a test for a single file or inside a folder
+    until [ $# -le 0 ]; do
+        path=$1
+        
+        if [ -f $path ]; then
+            neptune.logging $INFO test "Test the file '$path'"
+            test.file $path
+        elif [ -d $path ]; then
+            neptune.logging $INFO test "Discover test inside '$path'"
+            test.folder $path
+        else
+            neptune.logging $ERROR test "TestError: Impossible to test the path '$path'"
+        fi
+
+        shift
+    done
+fi
+echo
+
+# Finalize
+if [[ -f /tmp/neptune-test-report ]]; then
+    cat /tmp/neptune-test-report
+    exit_code=1
+else
+    neptune.style \
+    "\nTest suites OK ($(cat /tmp/neptune-test-count) in $(( $(date +%s) - $before ))s)\n"\
+    $FG_GREEN
+    exit_code=0
+fi
+
+test.clean
+
+exit $exit_code
+
